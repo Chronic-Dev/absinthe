@@ -81,7 +81,7 @@ AbsintheMainWnd::AbsintheMainWnd(void)
 
 void AbsintheMainWnd::PaypalClicked(wxCommandEvent& event)
 {
-	wxLaunchDefaultBrowser(wxT("https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=DPFUPCEAYUD4L"), 1);
+	wxLaunchDefaultBrowser(wxT("https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=4U6DQGJ2NRVUN"), 1);
 }
 
 void AbsintheMainWnd::GPClicked(wxCommandEvent& event)
