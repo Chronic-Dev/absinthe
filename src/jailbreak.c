@@ -73,6 +73,11 @@ int jb_device_is_supported(const char* product, const char* build)
 	return (vmaddr != 0);
 }
 
+int jb_check_consistency(const char* product, const char* build)
+{
+	return fsgen_check_consistency(build, product);
+}
+
 crashreport_t* fetch_crashreport(device_t* device) {
 	// We open crashreporter so we can download the mobilebackup2 crashreport
 	//  and parse the "random" dylib addresses. Thank you ASLR for nothing. ;P
@@ -506,7 +511,7 @@ static void prefs_add_entry(plist_t* pl) /*{{{*/
 	free(guid);
 } /*}}}*/
 
-int afc_upload_file(afc_client_t afc, const char* filename, const char* todir)
+int afc_upload_file2(afc_client_t afc, const char* filename, const char* dstfn)
 {
 	uint64_t handle = 0;
 	char data[0x1000];
@@ -516,24 +521,6 @@ int afc_upload_file(afc_client_t afc, const char* filename, const char* todir)
 		error("Unable to open local file %s\n", filename);
 		return -1;
 	}
-
-#ifdef WIN32
-	int i = 0;
-	int mfl = strlen(filename);
-	char* bn = (char*)filename;
-	for (i = mfl-1; i >= 0; i--) {
-		if ((bn[i] == '/') || (bn[i] == '\\')) {
-			bn = &bn[i+1];
-			break;
-		}
-	}
-#else
-	char *bn = basename((char*)filename);
-#endif
-	char *dstfn = (char*)malloc(strlen(todir)+1+strlen(bn)+1);
-	strcpy(dstfn, todir);
-	strcat(dstfn, "/");
-	strcat(dstfn, bn);
 
 	afc_error_t err = afc_file_open(afc, dstfn, AFC_FOPEN_WR, &handle);
 	if(err != AFC_E_SUCCESS) {
@@ -557,6 +544,29 @@ int afc_upload_file(afc_client_t afc, const char* filename, const char* todir)
 	return res;
 }
 
+int afc_upload_file(afc_client_t afc, const char* filename, const char* todir)
+{
+#ifdef WIN32
+	int i = 0;
+	int mfl = strlen(filename);
+	char* bn = (char*)filename;
+	for (i = mfl-1; i >= 0; i--) {
+		if ((bn[i] == '/') || (bn[i] == '\\')) {
+			bn = &bn[i+1];
+			break;
+		}
+	}
+#else
+	char *bn = basename((char*)filename);
+#endif
+	char *dstfn = (char*)malloc(strlen(todir)+1+strlen(bn)+1);
+	strcpy(dstfn, todir);
+	strcat(dstfn, "/");
+	strcat(dstfn, bn);
+
+        afc_upload_file2(afc, filename, dstfn);
+}
+
 void jb_signal_handler(int sig)
 {
 	quit_flag++;
@@ -577,6 +587,9 @@ static void afc_free_dictionary(char **dictionary) //ghetto i know, not sure whe
 }
 
 int jailbreak(const char* uuid, status_cb_t status_cb) {
+        char backup_directory[1024];
+        tmpnam(backup_directory);
+
 	device_t* device = NULL;
 
 	char* build = NULL;
@@ -748,20 +761,20 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 	/********************************************************/
 	/* make backup */
 	/********************************************************/
-	rmdir_recursive(BKPTMP);
-	__mkdir(BKPTMP, 0755);
+	rmdir_recursive(backup_directory);
+	__mkdir(backup_directory, 0755);
 
 	status_cb(NULL, 10);
 
 	char *bargv[] = {
 		"idevicebackup2",
 		"backup",
-		BKPTMP,
+		backup_directory,
 		NULL
 	};
 	idevicebackup2(3, bargv);
 
-	backup_t* backup = backup_open(BKPTMP, uuid);
+	backup_t* backup = backup_open(backup_directory, uuid);
 	if (!backup) {
 		fprintf(stderr, "ERROR: failed to open backup\n");
 		return -1;
@@ -947,7 +960,7 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 		"--system",
 		"--settings",
 		"--reboot",
-		BKPTMP,
+		backup_directory,
 		NULL
 	};
 	idevicebackup2(6, rargv);
@@ -1023,7 +1036,9 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 	lockdown_free(lockdown);
 	lockdown = NULL;
 
-	status_cb("Preparing jailbreak data...", 60);
+	status_cb("Preparing jailbreak data... Do not touch your device yet!", 60);
+
+	sleep(3);
 
         crashreport_t* crash = NULL;
         while(1)
@@ -1047,7 +1062,10 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
                     continue;
             }
 
-            break;
+            if(crash->pid >= 100 && crash->pid <= 900)
+                break;
+            else if(crash->pid >= 1000)
+                break;
         }
 
 	status_cb(NULL, 70);
@@ -1066,7 +1084,7 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 	}
 	char pidb[8];
 	// Add 15 "processes" here to allow time for the user to click the icon
-	unsigned int pid = crash->pid+15;
+	unsigned int pid = crash->pid;
 	sprintf(pidb, "%d", pid);
 	int pidlen = strlen(pidb);
 	debug("pid=%d (len=%d)\n", pid, pidlen);
@@ -1078,15 +1096,21 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 
 	status_cb(NULL, 75);
 
-	FILE* f = fopen("com.apple.ipsec.plist", "wb");
+        char stage1_conf[1024];
+        char stage2_conf[1024];
+
+        tmpnam(stage1_conf);
+        tmpnam(stage2_conf);
+
+	FILE* f = fopen(stage1_conf, "wb");
 	generate_rop(f, 0, build, product, pidlen, dscs);
 	fclose(f);
 
-	f = fopen("racoon-exploit-bootstrap.conf", "wb");
+	f = fopen(stage2_conf, "wb");
 	generate_rop(f, 1, build, product, pidlen, dscs);
 	fclose(f);
 
-	status_cb("Sending payload data, this may take a while... (Do not touch your device yet!)", 80);
+	status_cb("Sending payload data, this may take a while... Do not touch your device yet!", 80);
 
 	/********************************************************/
 	/* start AFC and add common and device-dependant files */
@@ -1124,7 +1148,7 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 	rmdir_recursive_afc(afc, "/corona", 0);
 
 	// upload files
-	afc_upload_file(afc, "racoon-exploit-bootstrap.conf", "/corona");
+	afc_upload_file2(afc, stage2_conf, "/corona/racoon-exploit-bootstrap.conf");
 
 	afc_upload_file(afc, "data/common/corona/Cydia.tgz", "/corona");
 	afc_upload_file(afc, "data/common/corona/jailbreak", "/corona");
@@ -1141,7 +1165,7 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 
 	sprintf(tmpfn, "data/%s/%s/corona/corona.tgz", build, product);
 	afc_upload_file(afc, tmpfn, "/corona");
-	sprintf(tmpfn, "data/%s/%s/corona/vnimage.clean", build, product);
+	sprintf(tmpfn, "data/common/corona/vnimage.clean", build, product);
 	afc_upload_file(afc, tmpfn, "/corona");
 	sprintf(tmpfn, "data/%s/%s/corona/vnimage.overflow", build, product);
 	afc_upload_file(afc, tmpfn, "/corona");
@@ -1162,14 +1186,14 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 	/* add com.apple.ipsec.plist to backup */
 	/********************************************************/
 	status_cb(NULL, 85);
-	backup = backup_open(BKPTMP, uuid);
+	backup = backup_open(backup_directory, uuid);
 	if (!backup) {
 		error("ERROR: failed to open backup\n");
 		goto fix;
 	}
 	char* ipsec_plist = NULL;
 	int ipsec_plist_size = 0;
-	file_read("com.apple.ipsec.plist", (unsigned char**)&ipsec_plist, &ipsec_plist_size);
+	file_read(stage1_conf, (unsigned char**)&ipsec_plist, &ipsec_plist_size);
 	if(ipsec_plist != NULL && ipsec_plist_size > 0) {
 		bf = backup_get_file(backup, "SystemPreferencesDomain", "SystemConfiguration/com.apple.ipsec.plist");
 		if (bf) {
@@ -1218,7 +1242,7 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 			"restore",
 			"--system",
 			"--settings",
-			BKPTMP,
+			backup_directory,
 			NULL
 		};
 		idevicebackup2(5, nrargv);
@@ -1233,9 +1257,9 @@ int jailbreak(const char* uuid, status_cb_t status_cb) {
 	/* here, we're done. the user needs to activate the exploit */
 	/********************************************************/
 	status_cb(NULL, 95);
-	rmdir_recursive(BKPTMP);
+	rmdir_recursive(backup_directory);
 
-	status_cb("Almost done – just unlock the screen if necessary, then tap the \"Jailbreak\" icon to finish. (It might be on a different homescreen, so don't give up looking!)", 100);
+	status_cb("Almost done – just unlock the screen if necessary, then tap the \"Absinthe\" icon to finish. (It might be on a different homescreen, so don't give up looking!)", 100);
 
 	goto leave;
 
@@ -1244,7 +1268,7 @@ fix_all:
 	/* Cleanup backup: remove VPN connection and webclip */
 	/********************************************************/
 	status_cb("Trying to recover...\n", 0);
-	backup = backup_open(BKPTMP, uuid);
+	backup = backup_open(backup_directory, uuid);
 	if (!backup) {
 		error("ERROR: failed to open backup\n");
 		goto fix;
@@ -1330,7 +1354,7 @@ fix_all:
 		"--system",
 		"--settings",
 		"--reboot",
-		BKPTMP,
+		backup_directory,
 		NULL
 	};
 	idevicebackup2(6, frargv);
@@ -1522,9 +1546,9 @@ fix:
 		fprintf(stderr, "WARNING: the folder /"AFCTMP" is still present in the user's Media folder. You have to check yourself for any leftovers and move them back if required.\n");
 	}
 
-	rmdir_recursive(BKPTMP);
+	rmdir_recursive(backup_directory);
 
-	status_cb("Recovery completed.", 100);
+	status_cb("Recovery completed. If you want to retry jailbreaking, unplug your device and plug it back in.", 100);
 
 leave:
 	afc_client_free(afc);

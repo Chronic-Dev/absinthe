@@ -12,6 +12,8 @@ typedef int gid_t;
 typedef uint32_t __uint32_t;
 #endif
 
+typedef unsigned int __32bit_ptr;
+
 #define LOG_WARNING 4
 
 #define	O_RDONLY	0x0000		/* open for reading only */
@@ -43,9 +45,9 @@ typedef enum {
 } vncontrol_t;
 
 struct vn_ioctl {
-    char *          vn_file;        /* pathname of file to mount */
-    int                     vn_size;        /* (returned) size of disk */
-    vncontrol_t     vn_control;
+    __32bit_ptr vn_file;        /* pathname of file to mount */
+    int         vn_size;        /* (returned) size of disk */
+    int         vn_control;     /* this is vncontrol_t, but we need to ensure 32 bit size */
 };
 
 #define VNIOCATTACH	_IOWR('F', 0, struct vn_ioctl)	/* attach file */
@@ -85,26 +87,37 @@ typedef int64_t __darwin_blkcnt_t;
 typedef int32_t __darwin_blksize_t;
 typedef	uint16_t __darwin_nlink_t;	/* link count */
 
+#ifndef __APPLE__
+typedef uint32_t __darwin_dev_t;
+typedef uint16_t __darwin_mode_t;
+typedef uint64_t __darwin_off_t;
+#endif
+
+struct __darwin_timespec {
+	int tv_sec;
+	int tv_nsec;
+};
+
 struct stat {
-	dev_t		st_dev;			/* [XSI] ID of device containing file */ \
-	mode_t		st_mode;		/* [XSI] Mode of file (see below) */ \
+	__darwin_dev_t		st_dev;			/* [XSI] ID of device containing file */ \
+	__darwin_mode_t		st_mode;		/* [XSI] Mode of file (see below) */ \
 	__darwin_nlink_t	st_nlink;	/* [XSI] Number of hard links */ \
 	uint64_t        st_ino;		/* [XSI] File serial number */ \
 	uid_t		st_uid;			/* [XSI] User ID of the file */ \
 	gid_t		st_gid;			/* [XSI] Group ID of the file */ \
-	dev_t		st_rdev;		/* [XSI] Device ID */ \
-	struct timespec st_atimespec;		/* time of last access */ \
-	struct timespec st_mtimespec;		/* time of last data modification */ \
-	struct timespec st_ctimespec;		/* time of last status change */ \
-	struct timespec st_birthtimespec;	/* time of file creation(birth) */
-	off_t		st_size;		/* [XSI] file size, in bytes */ \
+	__darwin_dev_t		st_rdev;		/* [XSI] Device ID */ \
+	struct __darwin_timespec st_atimespec;		/* time of last access */ \
+	struct __darwin_timespec st_mtimespec;		/* time of last data modification */ \
+	struct __darwin_timespec st_ctimespec;		/* time of last status change */ \
+	struct __darwin_timespec st_birthtimespec;	/* time of file creation(birth) */
+	__darwin_off_t		st_size;		/* [XSI] file size, in bytes */ \
 	__darwin_blkcnt_t	st_blocks;	/* [XSI] blocks allocated for file */ \
 	__darwin_blksize_t	st_blksize;	/* [XSI] optimal blocksize for I/O */ \
 	uint32_t	st_flags;		/* user defined flags for file */ \
 	uint32_t	st_gen;			/* file generation number */ \
 	int32_t	        st_lspare;		/* RESERVED: DO NOT USE! */ \
 	int64_t	        st_qspare[2];		/* RESERVED: DO NOT USE! */ \
-};
+} __attribute__((packed));
 
 #define	CTL_KERN	1		/* "high kernel": proc, limits */
 #define	KERN_PROC		14	/* struct: process entries */
@@ -151,7 +164,7 @@ struct vinfo_stat {
 	int64_t		vst_ctimensec;	/* nsec of last status change */
 	int64_t		vst_birthtime;	/*  File creation time(birth)  */
 	int64_t		vst_birthtimensec;	/* nsec of File creation time */
-	off_t		vst_size;	/* [XSI] file size, in bytes */
+	__darwin_off_t		vst_size;	/* [XSI] file size, in bytes */
 	int64_t		vst_blocks;	/* [XSI] blocks allocated for file */
 	int32_t		vst_blksize;	/* [XSI] optimal blocksize for I/O */
 	uint32_t	vst_flags;	/* user defined flags for file */
@@ -183,7 +196,7 @@ struct proc_regionwithpathinfo {
 #define	MNT_RDONLY	0x00000001	/* read only filesystem */
 #define	MNT_UPDATE	0x00010000	/* not a real mount, just an update */
 
-#define	RTLD_DEFAULT	((void *) -2)	/* Use default search algorithm. */
+#define	RTLD_DEFAULT	((__32bit_ptr) -2)	/* Use default search algorithm. */
 
 #define	PT_CONTINUE	7	/* continue the child */
 #define	PT_ATTACH	10	/* trace some running process */
@@ -195,10 +208,10 @@ struct __darwin_timezone {
 };
 
 struct hfs_mount_args {
-    char     *fspec;
+    __32bit_ptr fspec;
     uid_t     hfs_uid;
     gid_t     hfs_gid;
-    mode_t    hfs_mask;
+    __darwin_mode_t    hfs_mask;
     uint32_t  hfs_encoding;
     struct    __darwin_timezone hfs_timezone;
     int       flags;

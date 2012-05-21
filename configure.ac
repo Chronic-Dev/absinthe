@@ -15,15 +15,32 @@ AC_DEFINE(_DEBUG,1,[debugging])
 
 AC_PROG_CXX
 
-ACCFLAGS="-m32 -I\$(top_srcdir)/include -DLIBXML_STATIC=1 -g -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES "
+ACCFLAGS="-m32 -I\$(top_srcdir)/include -g -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES "
 ACSHAREDLIBS=""
+ACLDFLAGS=""
+
+LIBXML2_STATIC=""
+OPENSSL_STATIC=""
 
 SYSTYPE=
 case "$host_os" in
 	darwin*)
+		if test "x$BUILD_10_5" = "x1"; then
+		SYSTYPE=osx.10.5
+		ACCFLAGS+="-fPIC -arch i386 -arch ppc -isysroot /Developer/SDKs/MacOSX10.5.sdk -mmacosx-version-min=10.5 "
+		ACSHAREDLIBS+="-lpthread -lz -lm -liconv -lssl -lcrypto -lxml2 "
+		ACLDFLAGS="-arch i386 -arch ppc "
+		LIBSDIR="\$(top_srcdir)/staticlibs/$SYSTYPE"
+		ACGUI_CFLAGS+="-DPIC -DHAVE_ASPRINTF -DHAVE_VASPRINTF \ 
+                        -DCURL_PULL_SYS_SOCKET_H \
+                        -I/usr/lib/wx/include/mac-unicode-debug-2.8 -I/Developer/SDKs/MacOSX10.5.sdk/usr/include/wx-2.8 -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES -D__WXDEBUG__ -D__WXMAC__"
+                ACGUI_LDFLAGS+="-pthread -static-libstdc++"
+                ACGUI_LDADD+="-framework QuickTime -framework IOKit -framework Carbon -framework Cocoa -framework System  -lwx_macud-2.8"
+		else
 		SYSTYPE=osx
 		ACCFLAGS+="-fPIC -arch i386 "
-		ACSHAREDLIBS+="-lpthread -lz -lm -liconv "
+		ACSHAREDLIBS+="-lpthread -lz -lm -liconv -lssl -lcrypto -lxml2 "
+		ACLDFLAGS+="-arch i386 "
 		LIBSDIR="\$(top_srcdir)/staticlibs/$SYSTYPE"
 		ACGUI_CFLAGS+="-DPIC -DHAVE_ASPRINTF -DHAVE_VASPRINTF \
 			-isysroot /Developer/SDKs/MacOSX10.6.sdk \
@@ -35,11 +52,31 @@ case "$host_os" in
 			$LIBSDIR/libwx_baseu-2.9.a \
 			$LIBSDIR/libwx_osx_cocoau_core-2.9.a \
 			-framework IOKit -framework Carbon -framework Cocoa -framework QuickTime -framework OpenGL -framework System -framework Security"
+		fi
 	;;
 	linux*)
+		case "$BUILD_HOST_CPU" in
+		x86_64)
+		SYSTYPE=linux.x86_64
+		ACCFLAGS="-fPIC -I\$(top_srcdir)/include -g -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES "
+		ACSHAREDLIBS+="-lpthread -lz -lm -lssl -lcrypto -lxml2"
+		ACLDFLAGS+="-s"
+		LIBSDIR="\$(top_srcdir)/staticlibs/$SYSTYPE"
+		ACGUI_CFLAGS+="-DPIC -DHAVE_ASPRINTF -DHAVE_VASPRINTF \
+			-DwxDEBUG_LEVEL=0 \
+			-I\$(top_srcdir)/include/wxWidgets-2.9.2/include \
+			-I\$(top_srcdir)/include/os/linux/wxWidgets-2.9.2/lib/wx/include/x86_64-linux-gnu-gtk2-unicode-static-2.9 \
+			-D__WXGTK__ -pthread"
+                ACGUI_LDFLAGS+="-pthread -Wl,-Bsymbolic-functions -static-libstdc++"
+                ACGUI_LDADD+="$LIBSDIR/libwx_gtk2u_core-2.9.a \
+			$LIBSDIR/libwx_baseu-2.9.a \
+			-lpthread -lz -lm -lglib-2.0 -lgtk-x11-2.0"
+		;;
+		*)
 		SYSTYPE=linux
 		ACCFLAGS+="-fPIC "
-		ACSHAREDLIBS+="-lpthread -lz -lm "
+		ACSHAREDLIBS+="-lpthread -lz -lm -lssl -lcrypto -lxml2"
+		ACLDFLAGS+="-s"
 		LIBSDIR="\$(top_srcdir)/staticlibs/$SYSTYPE"
 		ACGUI_CFLAGS+="-DPIC -DHAVE_ASPRINTF -DHAVE_VASPRINTF \
 			-DwxDEBUG_LEVEL=0 \
@@ -50,11 +87,14 @@ case "$host_os" in
 		ACGUI_LDADD+="$LIBSDIR/libwx_gtk2u_core-2.9.a \
 			$LIBSDIR/libwx_baseu-2.9.a \
 			-lpthread -lz -lm -lglib-2.0 -lgtk-x11-2.0"
+		;;
+		esac
 	;;
 	mingw32)
 		SYSTYPE=win32
-		ACCFLAGS+="-DWIN32 "
+		ACCFLAGS+="-DWIN32 -D__LITTLE_ENDIAN__=1 -DLIBXML_STATIC=1 "
 		ACSHAREDLIBS+="-lz -lm -lws2_32 -lgdi32 -lole32 "
+		ACLDFLAGS+="-s"
 		LIBSDIR="\$(top_srcdir)/staticlibs/$SYSTYPE"
 		ACGUI_CFLAGS+="-D_WIN32 -D__LITTLE_ENDIAN__=1 \
 			-DCURL_PULL_WS2TCPIP_H=1 \
@@ -65,6 +105,8 @@ case "$host_os" in
 		ACGUI_LDADD+="\$(top_srcdir)/gui/win32res.o $LIBSDIR/libwx_mswu_core-2.8.a \
 			$LIBSDIR/libwx_baseu-2.8.a \
 			-lz -lm -lws2_32 -lgdi32 -lole32 -loleaut32 -luuid -lcomctl32 -lsetupapi"
+		LIBXML2_STATIC="$LIBSDIR/libxml2.a"
+		OPENSSL_STATIC="$LIBSDIR/libssl.a $LIBSDIR/libcrypto.a"
 	;;
 	*)
 	;;
@@ -81,15 +123,14 @@ LIBDIR="\$(top_srcdir)/staticlibs/$SYSTYPE"
 GLOBAL_LIBS=" \
  $LIBDIR/libimobiledevice.a \
  $LIBDIR/libplist.a \
- $LIBDIR/libxml2.a \
- $LIBDIR/libssl.a \
- $LIBDIR/libcrypto.a \
+ $LIBXML2_STATIC \
+ $OPENSSL_STATIC \
  $LIBDIR/libusbmuxd.a \
  $ACSHAREDLIBS \ 
 "
 AC_SUBST(GLOBAL_LIBS)
 
-GLOBAL_LDFLAGS="-static-libgcc"
+GLOBAL_LDFLAGS="-static-libgcc $ACLDFLAGS"
 AC_SUBST(GLOBAL_LDFLAGS)
 
 GUI_CFLAGS=$ACGUI_CFLAGS

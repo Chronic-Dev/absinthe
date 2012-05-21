@@ -1,10 +1,14 @@
 #include "AbsintheMainWnd.h"
+#include "version.h"
 
 AbsintheMainWnd::AbsintheMainWnd(void)
-	: wxFrame(NULL, wxID_ANY, wxT(WND_TITLE), wxDefaultPosition, wxSize(WND_WIDTH, WND_HEIGHT), (wxSTAY_ON_TOP | wxDEFAULT_FRAME_STYLE) & ~(wxRESIZE_BORDER | wxMAXIMIZE_BOX))
+	: wxFrame(NULL, wxID_ANY, wxT(WND_TITLE " - Version " ABSINTHE_VERSION_STRING), wxDefaultPosition, wxSize(WND_WIDTH, WND_HEIGHT), (wxSTAY_ON_TOP | wxDEFAULT_FRAME_STYLE) & ~(wxRESIZE_BORDER | wxMAXIMIZE_BOX))
 {
 #if defined(__WXMSW__)
 	SetIcon(wxICON(AppIcon));
+#endif
+#if defined(__WXGTK__)
+	SetIcon(wxIcon(wxT("data/icon.png")));
 #endif
 	wxPanel* panel = new wxPanel(this, wxID_ANY, wxPoint(0, 0), wxSize(WND_WIDTH, WND_HEIGHT));
 
@@ -12,7 +16,7 @@ AbsintheMainWnd::AbsintheMainWnd(void)
 #if defined(__WXGTK__)
 #define FNTSIZE 10
 #endif
-#if defined(__WXOSX_COCOA__)
+#if defined(__WXOSX_COCOA__) || defined(__WXMAC__)
 #define FNTSIZE 12
 #endif
 #if defined(__WXMSW__)
@@ -20,13 +24,17 @@ AbsintheMainWnd::AbsintheMainWnd(void)
 #endif
 	wxFont fnt(FNTSIZE, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL);
 	wxStaticText* lbTop = new wxStaticText(panel, wxID_ANY, wxT("Welcome to Absinthe iOS 5.0/5.0.1 untethered A5 jailbreak!\n\nPlease make a backup of your device before using this tool. We don't expect any issues, but we aren't responsible if anything happens."), wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxALIGN_LEFT);
-	lbTop->Wrap(WND_WIDTH-20);
 	lbTop->SetFont(fnt);
+	lbTop->Wrap(WND_WIDTH-20);
 
 	lbStatus = new wxStaticText(panel, wxID_ANY, wxT(""), wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE);
 	lbStatus->SetFont(fnt);
 
+#if defined (__WXMAC__)
+	progressBar = new wxGauge(panel, wxID_ANY, 100, wxDefaultPosition, wxSize(300,11), wxGA_HORIZONTAL | wxGA_SMOOTH);
+#else
 	progressBar = new wxGauge(panel, wxID_ANY, 100, wxDefaultPosition, wxSize(300,17), wxGA_HORIZONTAL | wxGA_SMOOTH);
+#endif
 	btnStart = new wxButton(panel, 1111, wxT("Jailbreak"));
 	btnStart->Enable(0);
 	Connect(1111, wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(AbsintheMainWnd::handleStartClicked));
