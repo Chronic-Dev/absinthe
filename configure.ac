@@ -121,11 +121,11 @@ AC_SUBST(GLOBAL_CFLAGS)
 
 LIBDIR="\$(top_srcdir)/staticlibs/$SYSTYPE"
 GLOBAL_LIBS=" \
- $LIBDIR/libimobiledevice.a \
- $LIBDIR/libplist.a \
- $LIBXML2_STATIC \
- $OPENSSL_STATIC \
- $LIBDIR/libusbmuxd.a \
+ -limobiledevice \
+ -lplist \
+ -lxml2 \
+ -lssl \
+ -lusbmuxd \
  $ACSHAREDLIBS \ 
 "
 AC_SUBST(GLOBAL_LIBS)
